@@ -1,9 +1,17 @@
 #include <rivten.h>
 #include <rivten_math.h>
 
+#ifdef _WIN32
+#include <SDL.h>
+#else
+#include <SDL2/SDL.h>
+#endif
+
 #define ZeroMemory(x) memset((x), sizeof(x), 0)
 #define SEQUENCE_SIZE_LOG_2 15
 #define SEQUENCE_SIZE 1 << SEQUENCE_SIZE_LOG_2
+
+global_variable bool GlobalRunning = true;
 
 u32 Length(char* Buffer)
 {
@@ -167,6 +175,7 @@ int main(int ArgumentCount, char** Arguments)
 	FFT(InSeq, OutSeq, SEQUENCE_SIZE_LOG_2);
 #endif
 
+#if 0
 	FILE* FileHandle = fopen("output.txt", "w");
 	Assert(FileHandle);
 	char Buffer[512];
@@ -178,6 +187,95 @@ int main(int ArgumentCount, char** Arguments)
 		fwrite(Buffer, Length(Buffer), 1, FileHandle);
 	}
 	fclose(FileHandle);
+#endif
+	float MaxSampleValue = 0.0f;
+	for(u32 SampleIndex = 0; SampleIndex < SEQUENCE_SIZE; ++SampleIndex)
+	{
+		float SampleValue = OutSeq[SampleIndex];
+		if(SampleValue > MaxSampleValue)
+		{
+			MaxSampleValue = SampleValue;
+		}
+	}
+
+	// NOTE(hugo): SDL Fourier Transform Display
+	s32 SDLInitResult = SDL_Init(SDL_INIT_VIDEO);
+	Assert(SDLInitResult == 0);
+	SDL_Window* Window = SDL_CreateWindow("fft", 
+			SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
+			960, 540, 
+			SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIDDEN);
+	Assert(Window);
+	SDL_ShowWindow(Window);
+
+	SDL_Renderer* Renderer = SDL_CreateRenderer(Window, -1, SDL_RENDERER_ACCELERATED);
+	Assert(Renderer);
+
+	while(GlobalRunning)
+	{
+		// NOTE(hugo): Input processing
+		// {
+		SDL_Event Event = {};
+		for(;;)
+		{
+			s32 PendingEvents = 0;
+			PendingEvents = SDL_PollEvent(&Event);
+			if(!PendingEvents)
+			{
+				break;
+			}
+
+			switch(Event.type)
+			{
+				case SDL_QUIT:
+				{
+					GlobalRunning = false;
+				} break;
+			}
+		}
+		// }
+
+		SDL_SetRenderDrawColor(Renderer, 255, 255, 255, 255);
+		SDL_RenderClear(Renderer);
+		SDL_SetRenderDrawColor(Renderer, 255, 0, 0, 255);
+
+		// NOTE(hugo): Finding sample rectangle size
+		s32 WindowWidth = 0;
+		s32 WindowHeight = 0;
+		SDL_GetWindowSize(Window, &WindowWidth, &WindowHeight);
+		//u32 SampleRectWidth = Ceil(float(WindowWidth) / float(SEQUENCE_SIZE / 2));
+		Assert(SEQUENCE_SIZE >= 2 * WindowWidth);
+		u32 SamplesPerWidthPixel = Floor(float(SEQUENCE_SIZE) / (2.0f * float(WindowWidth)));
+
+		// NOTE(hugo): We do not take the whole screen for the max value
+		// Only 90% of it
+		float SampleRectHeightPerUnit = (0.90f * float(WindowHeight) / MaxSampleValue);
+
+		for(u32 PixelIndex = 0; PixelIndex < u32(WindowWidth); ++PixelIndex)
+		{
+			// TODO(hugo): For now we select the maximum value on a 
+			// particular pixel. Improve this somehow !
+			float MaxSampleValueInPixel = 0.0f;
+			for(u32 SampleIndex = 0; SampleIndex < SamplesPerWidthPixel; ++SampleIndex)
+			{
+				float SampleValue = OutSeq[SampleIndex + SamplesPerWidthPixel * PixelIndex];
+				if(SampleValue > MaxSampleValueInPixel)
+				{
+					MaxSampleValueInPixel = SampleValue;
+				}
+			}
+			SDL_Rect SampleRect = {};
+			SampleRect.x = PixelIndex;
+			SampleRect.h = u32(MaxSampleValueInPixel * SampleRectHeightPerUnit);
+			SampleRect.y = WindowHeight - SampleRect.h;
+			SampleRect.w = 1;
+			SDL_RenderFillRect(Renderer, &SampleRect);
+		}
+
+		SDL_RenderPresent(Renderer);
+	}
+
+    SDL_Quit();
 
 	return(0);
 }
